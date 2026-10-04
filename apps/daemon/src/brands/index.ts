@@ -27,6 +27,11 @@ import type {
   BrandSummary,
   ProjectMetadata,
 } from '@open-design/contracts';
+import {
+  BRAND_OVERRIDES_DIR,
+  BRAND_OVERRIDES_STYLESHEET,
+  BRAND_OVERRIDES_SYSTEM_DIR,
+} from '@open-design/contracts';
 
 import {
   createUserDesignSystem,
@@ -1359,6 +1364,9 @@ export async function finalizeBrand(
   copyProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, 'logos');
   copyProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, 'fonts');
   copyProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, 'imagery');
+  // The authored overrides layer is an input the rebuild re-applies; mirror it
+  // exactly so a deleted override stops applying too.
+  mirrorProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, BRAND_OVERRIDES_DIR);
 
   const guideMd =
     (await readProjectTextOrNull(projectsRoot, projectId, 'BRAND.md')) ?? brandGuideMd(brand);
@@ -1912,7 +1920,11 @@ export async function renderBrandPreviewIntoProject(
  *  a turn and confuses the run). Keep this prompt describing the methodology
  *  inline and steer the agent away from invoking any skill / slash command. */
 const SEED_AUTHORING_GUIDANCE =
-  'Persist engine-level overrides such as control height in `brand.json.seed` (for example, `{ "controlHeight": 44 }`). Do not edit `system/seed.json` or other generated `system/` files directly; `od brand finalize` replaces them.';
+  'Persist engine-level overrides such as control height in `brand.json.seed` (for example, `{ "controlHeight": 44 }`). Do not edit `system/seed.json` or other generated `system/` files, `brand.html`, or `DESIGN.md` directly; `od brand finalize` regenerates them, and the host re-runs it after every turn. Author styling the brand data cannot express in `' +
+  BRAND_OVERRIDES_STYLESHEET +
+  '`, and replacement pages or extra assets in `' +
+  BRAND_OVERRIDES_SYSTEM_DIR +
+  '/<path>`; the rebuild re-applies both.';
 
 function brandExtractionPrompt(input: {
   url: string;
@@ -1927,7 +1939,7 @@ function brandExtractionPrompt(input: {
       `Source: pasted DESIGN.md (${input.url})`,
       `Brand id: ${input.brandId}`,
       '',
-      'A usable design system has ALREADY been parsed from `context/input-DESIGN.md`, finalized programmatically, and registered. The design-system page (`brand.html`) is open as the active tab, already in the `ready` state and applyable everywhere RIGHT NOW. Your job is to ENRICH that provisional system in place: inspect `context/input-DESIGN.md`, `DESIGN.md`, `brand.json`, `system/variables.css`, `system/theme.json`, and the component kit pages; then replace weak guesses with clearer token roles, component guidance, voice, and implementation notes.',
+      'A usable design system has ALREADY been parsed from `context/input-DESIGN.md`, finalized programmatically, and registered. The design-system page (`brand.html`) is open as the active tab, already in the `ready` state and applyable everywhere RIGHT NOW. Your job is to ENRICH that provisional system: inspect `context/input-DESIGN.md`, `DESIGN.md`, `brand.json`, `system/variables.css`, `system/theme.json`, and the component kit pages; then replace weak guesses with clearer token roles, component guidance, voice, and implementation notes by editing the kit\'s inputs.',
       '',
       'Do not create a duplicate design system. Keep the same registered user design-system id. Update `brand.json` and `BRAND.md` incrementally, run `od brand preview ' + input.brandId + '` after field groups, then run `od brand finalize ' + input.brandId + '` when ready.',
       SEED_AUTHORING_GUIDANCE,
@@ -1935,7 +1947,7 @@ function brandExtractionPrompt(input: {
       'Focus areas:',
       '- Normalize color roles from the pasted DESIGN.md into background, surface, foreground, muted, border, accent, and accent-secondary.',
       '- Strengthen typography guidance, spacing/radius/layout posture, component kit coverage, and do/don\'t rules from the source prose.',
-      '- Keep `DESIGN.md`, `brand.json`, `system/kit.html`, `system/kit.dark.html`, token JSON/CSS files, and artifact previews coherent.',
+      '- Express component-kit and artifact changes through `brand.json`, `brand.json.seed`, and the overrides layer, so the rebuilt `DESIGN.md`, component kits, token files, and artifact previews stay coherent.',
       '',
       'Finish by summarizing which tokens and component-kit files changed.',
     ].join('\n');
@@ -1987,7 +1999,7 @@ function brandExtractionFallbackPrompt(input: {
       '',
       'The daemon created a live design-system scaffold and saved the pasted source at `context/input-DESIGN.md`. A ready design system may already be registered from the programmatic parser; if not, use the pasted file as the canonical source and complete it.',
       '',
-      'Read `context/input-DESIGN.md`, then update `brand.json`, `BRAND.md`, and `DESIGN.md` progressively. Run `od brand preview ' + input.brandId + '` after meaningful field groups, then `od brand finalize ' + input.brandId + '` to register or update the same design system in place.',
+      'Read `context/input-DESIGN.md`, then update `brand.json` and `BRAND.md` progressively. Run `od brand preview ' + input.brandId + '` after meaningful field groups, then `od brand finalize ' + input.brandId + '` to register or update the same design system in place.',
       SEED_AUTHORING_GUIDANCE,
       '',
       'Finish by pointing the user at the completed brand.html and reusable design-system assets.',
@@ -2072,6 +2084,28 @@ async function readProjectTextOrNull(
   } catch {
     return null;
   }
+}
+
+/** Make the brand dir's copy of a project subdirectory match the project,
+ *  removing it when the project has none. */
+function mirrorProjectDirToBrand(
+  projectsRoot: string,
+  projectId: string,
+  brandsRoot: string,
+  brandId: string,
+  dirName: string,
+): void {
+  const target = resolveBrandFile(brandsRoot, brandId, [dirName]);
+  if (!target) return;
+  let projectDir: string;
+  try {
+    projectDir = resolveProjectDir(projectsRoot, projectId);
+  } catch {
+    return;
+  }
+  const source = path.join(projectDir, dirName);
+  if (isDirectory(source)) copyDirectorySync(source, target);
+  else fs.rmSync(target, { recursive: true, force: true });
 }
 
 /** Copy a top-level project subdirectory (logos / fonts) into the brand dir. */
