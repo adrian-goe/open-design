@@ -51,7 +51,7 @@ import {
   upsertMessage,
   updateProject,
 } from '../db.js';
-import { listFiles, readProjectFile, resolveProjectDir, writeProjectFile } from '../projects.js';
+import { deleteProjectFile, listFiles, readProjectFile, resolveProjectDir, writeProjectFile } from '../projects.js';
 import { brandFromDesignMd, sourceUrlForDesignMd } from './design-md-input.js';
 import { brandGuideMd, brandToDesignMd } from './design-md.js';
 import { reflowBrandToMemory } from './memory.js';
@@ -2145,7 +2145,7 @@ async function syncBrandFilesToProject(input: {
   await write('brand.json', JSON.stringify(input.brand, null, 2));
   await write('DESIGN.md', brandToDesignMd(input.brand));
   await writeOptionalFileToProject(input.projectsRoot, input.projectId, input.metadata, brandRoot, 'guide.md');
-  await copyDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, brandSystemDir(input.brandsRoot, input.brandId), 'system');
+  await mirrorDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, brandSystemDir(input.brandsRoot, input.brandId), 'system');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'logos'), 'logos');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'fonts'), 'fonts');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'imagery'), 'imagery');
@@ -2173,6 +2173,25 @@ async function copyOptionalDirectoryToProject(
   targetPrefix: string,
 ): Promise<void> {
   if (!isDirectory(sourceDir)) return;
+  await copyDirectoryToProject(projectsRoot, projectId, metadata, sourceDir, targetPrefix);
+}
+
+/** Make the project's `targetPrefix/` match `sourceDir` exactly: a file the
+ *  source no longer has (an override-only asset whose override was deleted)
+ *  is removed instead of lingering from an earlier build. */
+async function mirrorDirectoryToProject(
+  projectsRoot: string,
+  projectId: string,
+  metadata: ProjectMetadata,
+  sourceDir: string,
+  targetPrefix: string,
+): Promise<void> {
+  const keep = new Set(collectFiles(sourceDir).map((file) => toPosixPath(path.join(targetPrefix, file.rel))));
+  const existing = await listFiles(projectsRoot, projectId, { metadata });
+  for (const file of existing) {
+    if (!file.path.startsWith(`${targetPrefix}/`) || keep.has(file.path)) continue;
+    await deleteProjectFile(projectsRoot, projectId, file.path, metadata);
+  }
   await copyDirectoryToProject(projectsRoot, projectId, metadata, sourceDir, targetPrefix);
 }
 

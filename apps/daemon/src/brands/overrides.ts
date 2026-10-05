@@ -63,42 +63,43 @@ export function hasBrandOverrides(overrides: BrandOverrides): boolean {
 
 /**
  * Gallery srcdoc hook: an overridden artifact kind previews its authored page
- * (resolved from `artifacts/` like the file itself); every other preview gets
- * the authored stylesheet, resolved from the gallery's own location.
+ * (resolved from `artifacts/` like the file itself); every other preview is
+ * resolved from the gallery's own location. Both get the authored stylesheet.
  */
 export function brandOverridesPreviewDecorator(
   overrides: BrandOverrides,
 ): ((html: string, kind: AssetKind) => string) | undefined {
   if (!hasBrandOverrides(overrides)) return undefined;
   return (html, kind) => {
-    const authored = overrides.files.get(`artifacts/${kind}.html`);
-    if (authored) return injectAfterHeadOpen(authored.toString('utf8'), '<base href="artifacts/">');
-    if (overrides.stylesheet === null) return html;
-    return injectBeforeHeadClose(html, stylesheetLink(BRAND_SYSTEM_OVERRIDES_STYLESHEET));
+    const authoredRel = `artifacts/${kind}.html`;
+    const authored = overrides.files.get(authoredRel);
+    if (authored) {
+      const page = linkAuthoredStylesheet(authored.toString('utf8'), authoredRel, overrides);
+      return injectAfterHeadOpen(page, '<base href="artifacts/">');
+    }
+    return linkAuthoredStylesheet(html, BRAND_SYSTEM_OVERRIDES_STYLESHEET, overrides);
   };
 }
 
 /**
- * Apply the overrides to an assembled bundle: publish the stylesheet, link it
- * into every generated page, then let authored files replace or add bundle
- * entries. Authored files are carried as `.b64` entries so binary assets are
- * written byte-for-byte.
+ * Apply the overrides to an assembled bundle: publish the stylesheet, let
+ * authored files replace or add bundle entries, and link the stylesheet into
+ * every page — generated or authored. Non-HTML authored files are carried as
+ * `.b64` entries so binary assets are written byte-for-byte.
  */
 export function applyBrandOverrides(system: BrandSystem, overrides: BrandOverrides): BrandSystem {
   if (!hasBrandOverrides(overrides)) return system;
   const files: Record<string, string> = { ...system.files };
+  for (const [rel, content] of overrides.files) {
+    delete files[rel];
+    if (isHtmlPath(rel)) files[rel] = content.toString('utf8');
+    else files[`${rel}.b64`] = content.toString('base64');
+  }
   if (overrides.stylesheet !== null) {
     files[BRAND_SYSTEM_OVERRIDES_STYLESHEET] = overrides.stylesheet;
     for (const rel of Object.keys(files)) {
-      if (!rel.endsWith('.html') || overrides.files.has(rel)) continue;
-      const depth = rel.split('/').length - 1;
-      const href = `${'../'.repeat(depth)}${BRAND_SYSTEM_OVERRIDES_STYLESHEET}`;
-      files[rel] = injectBeforeHeadClose(files[rel]!, stylesheetLink(href));
+      if (isHtmlPath(rel)) files[rel] = linkAuthoredStylesheet(files[rel]!, rel, overrides);
     }
-  }
-  for (const [rel, content] of overrides.files) {
-    delete files[rel];
-    files[`${rel}.b64`] = content.toString('base64');
   }
   return { ...system, files };
 }
@@ -108,6 +109,18 @@ export function applyBrandOverrides(system: BrandSystem, overrides: BrandOverrid
 export function linkBrandOverridesIntoKitPage(html: string, projectDir: string): string {
   if (!isFile(path.join(projectDir, ...BRAND_OVERRIDES_STYLESHEET.split('/')))) return html;
   return injectBeforeHeadClose(html, stylesheetLink(`system/${BRAND_SYSTEM_OVERRIDES_STYLESHEET}`));
+}
+
+/** Link the published stylesheet into the page at bundle path `rel`, with an
+ *  href relative to that page. No-op when no stylesheet is authored. */
+function linkAuthoredStylesheet(html: string, rel: string, overrides: BrandOverrides): string {
+  if (overrides.stylesheet === null) return html;
+  const depth = rel.split('/').length - 1;
+  return injectBeforeHeadClose(html, stylesheetLink(`${'../'.repeat(depth)}${BRAND_SYSTEM_OVERRIDES_STYLESHEET}`));
+}
+
+function isHtmlPath(rel: string): boolean {
+  return rel.toLowerCase().endsWith('.html');
 }
 
 function stylesheetLink(href: string): string {

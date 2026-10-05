@@ -30,13 +30,15 @@ export const BRAND_SYSTEM_OVERRIDES_STYLESHEET = 'overrides.css';
 /**
  * Bundle-relative `system/` paths an override may not replace. Tokens stay
  * single-sourced from `brand.json` / `brand.json.seed`; the docs and the
- * published stylesheet are owned by the builder.
+ * published stylesheet are owned by the builder. Compared case-insensitively:
+ * on a case-insensitive filesystem `Variables.css` overwrites `variables.css`.
  */
-export function isReservedBrandSystemPath(relPath: string): boolean {
+export function isReservedBrandSystemPath(path: string): boolean {
+  const relPath = path.toLowerCase();
   return (
     relPath === 'seed.json'
     || relPath === 'theme.json'
-    || relPath === 'BRAND-SYSTEM.md'
+    || relPath === 'brand-system.md'
     || relPath === BRAND_SYSTEM_OVERRIDES_STYLESHEET
     || /^tokens\.[^/]+\.json$/u.test(relPath)
     || /^variables(?:\.[^/]+)?\.css$/u.test(relPath)
